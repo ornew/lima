@@ -64,6 +64,19 @@ const data = `# Warning: iptables-legacy tables present, use iptables-legacy to 
 -A CNI-cb0db077a14ecd8d4a843636 ! -d 224.0.0.0/4 -m comment --comment "name: \"bridge\" id: \"default-a8df9868a5f7ee2468118331dd6185e5655f7ff8e77f067408b7ff40e9457860\"" -j MASQUERADE
 -A CNI-f1ca917e7b9939c7d8457d68 -d 10.4.0.0/24 -m comment --comment "name: \"bridge\" id: \"default-a65e32cc21f9da99b4aa826914873e343f8f09f910657450be551aa24d676e51\"" -j ACCEPT
 -A CNI-f1ca917e7b9939c7d8457d68 ! -d 224.0.0.0/4 -m comment --comment "name: \"bridge\" id: \"default-a65e32cc21f9da99b4aa826914873e343f8f09f910657450be551aa24d676e51\"" -j MASQUERADE
+-A KUBE-EXT-CGFVTWEXQTKV5QXW -m comment --comment "masquerade traffic for default/nginx-nodeport external destinations" -j KUBE-MARK-MASQ
+-A KUBE-EXT-CGFVTWEXQTKV5QXW -j KUBE-SVC-CGFVTWEXQTKV5QXW
+-A KUBE-MARK-DROP -j MARK --set-xmark 0x8000/0x8000
+-A KUBE-MARK-MASQ -j MARK --set-xmark 0x4000/0x4000
+-A KUBE-NODEPORTS -p tcp -m comment --comment "default/nginx-nodeport" -m tcp --dport 30010 -j KUBE-EXT-CGFVTWEXQTKV5QXW
+-A KUBE-POSTROUTING -m mark ! --mark 0x4000/0x4000 -j RETURN
+-A KUBE-POSTROUTING -j MARK --set-xmark 0x4000/0x0
+-A KUBE-POSTROUTING -m comment --comment "kubernetes service traffic requiring SNAT" -j MASQUERADE --random-fully
+-A KUBE-SEP-4HC2IE63VSQQECKY -s 10.244.0.159/32 -m comment --comment "default/nginx-nodeport" -j KUBE-MARK-MASQ
+-A KUBE-SEP-4HC2IE63VSQQECKY -p tcp -m comment --comment "default/nginx-nodeport" -m tcp -j DNAT --to-destination 10.244.0.159:80
+-A KUBE-SERVICES -d 10.102.188.3/32 -p tcp -m comment --comment "default/nginx-nodeport cluster IP" -m tcp --dport 8000 -j KUBE-SVC-CGFVTWEXQTKV5QXW
+-A KUBE-SVC-CGFVTWEXQTKV5QXW ! -s 10.244.0.0/16 -d 10.102.188.3/32 -p tcp -m comment --comment "default/nginx-nodeport cluster IP" -m tcp --dport 8000 -j KUBE-MARK-MASQ
+-A KUBE-SVC-CGFVTWEXQTKV5QXW -m comment --comment "default/nginx-nodeport -> 10.244.0.159:80" -j KUBE-SEP-4HC2IE63VSQQECKY
 `
 
 func TestParsePortsFromRules(t *testing.T) {
@@ -80,8 +93,8 @@ func TestParsePortsFromRules(t *testing.T) {
 	}
 
 	l := len(res)
-	if l != 2 {
-		t.Fatalf("expected 2 ports parsed from iptables but parsed %d", l)
+	if l != 3 {
+		t.Fatalf("expected 3 ports parsed from iptables but parsed %d", l)
 	}
 
 	if res[0].IP.String() != "0.0.0.0" || res[0].Port != 8082 || res[0].TCP != true {
@@ -89,5 +102,8 @@ func TestParsePortsFromRules(t *testing.T) {
 	}
 	if res[1].IP.String() != "127.0.0.1" || res[1].Port != 8081 || res[1].TCP != true {
 		t.Errorf("expected port 8081 on IP 127.0.0.1 with TCP true but go port %d on IP %s with TCP %t", res[1].Port, res[1].IP.String(), res[1].TCP)
+	}
+	if res[2].IP.String() != "0.0.0.0" || res[2].Port != 30010 || res[2].TCP != true {
+		t.Errorf("expected port 30001 on IP 0.0.0.0 with TCP true but go port %d on IP %s with TCP %t", res[2].Port, res[2].IP.String(), res[2].TCP)
 	}
 }

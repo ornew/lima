@@ -17,9 +17,9 @@ type Entry struct {
 	Port int
 }
 
-// This regex can detect a line in the iptables added by portmap to do the
-// forwarding. The following two are examples of lines (notice that one has the
-// destination IP and the other does not):
+// This regex can detect a line in the iptables added by CNI portmap plugin
+// to do the forwarding. The following two are examples of lines
+// (notice that one has the destination IP and the other does not):
 //    -A CNI-DN-2e2f8d5b91929ef9fc152 -d 127.0.0.1/32 -p tcp -m tcp --dport 8081 -j DNAT --to-destination 10.4.0.7:80
 //    -A CNI-DN-04579c7bb67f4c3f6cca0 -p tcp -m tcp --dport 8082 -j DNAT --to-destination 10.4.0.10:80
 // The -A on the front is to amend the rule that was already created. portmap
@@ -29,7 +29,11 @@ type Entry struct {
 // ipv4 IP address. We need to detect this IP.
 // --dport is the destination port. We need to detect this port
 // -j DNAT this tells us it's the line doing the port forwarding.
-var findPortRegex = regexp.MustCompile(`-A\s+CNI-DN-\w*\s+(?:-d ((?:\b25[0-5]|\b2[0-4][0-9]|\b[01]?[0-9][0-9]?)(?:\.(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)){3}))?(?:/32\s+)?-p (tcp)?.*--dport (\d+) -j DNAT`)
+var findCNIPortRegex = regexp.MustCompile(`-A\s+CNI-DN-\w*\s+(?:-d ((?:\b25[0-5]|\b2[0-4][0-9]|\b[01]?[0-9][0-9]?)(?:\.(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)){3}))?(?:/32\s+)?-p (tcp)?.*--dport (\d+) -j DNAT`)
+
+// This regex can detect a line in the iptables add by kube-proxy to expose NodePort.
+//   -A KUBE-NODEPORTS -p tcp -m comment --comment "default/nginx" -m tcp --dport 30010 -j KUBE-EXT-CGFVTWEXQTKV5QXW
+var findKubeNodePortsRegex = regexp.MustCompile(`-A\s+KUBE-NODEPORTS\s+-p (tcp)?.*--dport (\d+)`)
 
 func GetPorts() ([]Entry, error) {
 	// TODO: add support for ipv6
@@ -63,7 +67,7 @@ func GetPorts() ([]Entry, error) {
 func parsePortsFromRules(rules []string) ([]Entry, error) {
 	var entries []Entry
 	for _, rule := range rules {
-		if found := findPortRegex.FindStringSubmatch(rule); found != nil {
+		if found := findCNIPortRegex.FindStringSubmatch(rule); found != nil {
 			if len(found) == 4 {
 				port, err := strconv.Atoi(found[3])
 				if err != nil {
@@ -82,6 +86,24 @@ func parsePortsFromRules(rules []string) ([]Entry, error) {
 				}
 				ent := Entry{
 					IP:   net.ParseIP(ip),
+					Port: port,
+					TCP:  istcp,
+				}
+				entries = append(entries, ent)
+			}
+		}
+		if found := findKubeNodePortsRegex.FindStringSubmatch(rule); found != nil {
+			if len(found) == 3 {
+				port, err := strconv.Atoi(found[2])
+				if err != nil {
+					return nil, err
+				}
+				istcp := false
+				if found[1] == "tcp" {
+					istcp = true
+				}
+				ent := Entry{
+					IP:   net.ParseIP("0.0.0.0"),
 					Port: port,
 					TCP:  istcp,
 				}
